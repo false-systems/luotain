@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "luotain-core",
+    "luotain-judge",
+    "luotain-runner",
+    "luotain-mcp",
+    "luotain-cli",
+    "fp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["False Systems"]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = true

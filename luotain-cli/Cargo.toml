@@ -1,0 +1,23 @@
+[package]
+name = "luotain-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "luotain"
+path = "src/main.rs"
+
+[dependencies]
+luotain-core = { path = "../luotain-core" }
+luotain-judge = { path = "../luotain-judge" }
+luotain-runner = { path = "../luotain-runner" }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+
+[lints]
+workspace = true
