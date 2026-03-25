@@ -1,3 +1,4 @@
+use crate::config::CONFIG_FILENAME;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -69,6 +70,10 @@ impl SpecTree {
             if entry.file_type().is_file() {
                 let ext = entry.path().extension().and_then(|e| e.to_str());
                 if ext == Some("md") {
+                    let filename = entry.file_name().to_string_lossy().to_string();
+                    if filename == CONFIG_FILENAME {
+                        continue;
+                    }
                     if let Ok(rel) = entry.path().strip_prefix(&self.root) {
                         specs.push(rel.to_string_lossy().to_string());
                     }
@@ -115,6 +120,11 @@ impl SpecTree {
             } else {
                 format!("{}/{}", rel, child_name)
             };
+
+            // Skip _config.md — it's config, not a spec
+            if child_name == CONFIG_FILENAME {
+                continue;
+            }
 
             if child_path.is_dir() {
                 children.push(self.build_node(&child_path, &child_rel)?);

@@ -41,9 +41,12 @@ enum Commands {
         /// Path to spec tree root
         #[arg(long)]
         specs: PathBuf,
-        /// Target base URL (e.g., http://localhost:8080)
+        /// Target base URL — overrides _config.md (e.g., http://localhost:8080)
         #[arg(long)]
-        target: String,
+        target: Option<String>,
+        /// Environment name for config overrides (e.g., staging, prod)
+        #[arg(long)]
+        env: Option<String>,
         /// LLM provider: "anthropic" or "openai" (for any OpenAI-compatible API)
         #[arg(long, default_value = "anthropic")]
         provider: String,
@@ -135,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Run {
             specs,
             target,
+            env,
             provider,
             model,
             base_url,
@@ -186,7 +190,8 @@ async fn main() -> anyhow::Result<()> {
             let runner = Runner::new(agent);
             let run_config = RunConfig {
                 spec_root: specs.to_string_lossy().to_string(),
-                target,
+                target_override: target,
+                env,
             };
 
             let report = runner.run(&run_config).await?;

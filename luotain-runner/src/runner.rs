@@ -5,16 +5,21 @@
 //! It does NOT interpret specs or produce verdicts — that's the judge's job.
 
 use crate::report::TestReport;
+use luotain_core::config::{self, ConfigError, Connection, TargetConfig};
 use luotain_core::session::VerdictOutcome;
 use luotain_core::spec::SpecTree;
 use luotain_judge::agent::Agent;
 use luotain_judge::provider::JudgeError;
+use std::path::Path;
 use std::time::Instant;
 
 /// Configuration for a test run.
 pub struct RunConfig {
     pub spec_root: String,
-    pub target: String,
+    /// CLI --target override (takes precedence over _config.md)
+    pub target_override: Option<String>,
+    /// Environment name for config overrides (--env staging)
+    pub env: Option<String>,
 }
 
 /// Orchestrates a complete test pass over a spec tree.
@@ -30,6 +35,15 @@ impl Runner {
     /// Run all specs and produce a report.
     pub async fn run(&self, config: &RunConfig) -> Result<TestReport, RunError> {
         let start = Instant::now();
+
+        // Resolve target config: CLI override > _config.md > error
+        let target_config = self.resolve_target(config)?;
+        let target_url = match &target_config.connection {
+            Connection::Http { base_url } => base_url.clone(),
+            Connection::Grpc { host, port, .. } => format!("{}:{}", host, port),
+            Connection::Tcp { host, port, .. } => format!("{}:{}", host, port),
+            Connection::Cli { command, .. } => command.clone(),
+        };
 
         let tree =
             SpecTree::open(&config.spec_root).map_err(|e| RunError::Spec(e.to_string()))?;
@@ -52,7 +66,7 @@ impl Runner {
 
             match self
                 .agent
-                .test_spec(spec_path, &content, &config.target)
+                .test_spec(spec_path, &content, &target_url)
                 .await
             {
                 Ok(result) => {
@@ -81,10 +95,30 @@ impl Runner {
 
         Ok(TestReport::from_results(
             config.spec_root.clone(),
-            config.target.clone(),
+            target_url,
             results,
             start.elapsed().as_millis() as u64,
         ))
+    }
+
+    fn resolve_target(&self, config: &RunConfig) -> Result<TargetConfig, RunError> {
+        // CLI --target always wins
+        if let Some(url) = &config.target_override {
+            let mut tc = config::config_from_url(url.clone());
+            // Still load _config.md for auth even with URL override
+            if let Ok(Some(file_config)) =
+                config::load_config(Path::new(&config.spec_root), config.env.as_deref())
+            {
+                tc.auth = file_config.auth;
+            }
+            return Ok(tc);
+        }
+
+        // Try _config.md
+        match config::load_config(Path::new(&config.spec_root), config.env.as_deref())? {
+            Some(tc) => Ok(tc),
+            None => Err(RunError::NoTarget),
+        }
     }
 }
 
@@ -94,4 +128,8 @@ pub enum RunError {
     Spec(String),
     #[error("judge error: {0}")]
     Judge(#[from] JudgeError),
+    #[error("config error: {0}")]
+    Config(#[from] ConfigError),
+    #[error("no target — provide --target URL or add _config.md to the spec root")]
+    NoTarget,
 }
