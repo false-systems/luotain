@@ -49,6 +49,9 @@ enum Commands {
         /// Environment name for config overrides (e.g., staging, prod)
         #[arg(long)]
         env: Option<String>,
+        /// Run only specs matching this path (e.g., "auth/login.md" or "auth/")
+        #[arg(long)]
+        only: Option<String>,
         /// LLM provider: "anthropic" or "openai" (for any OpenAI-compatible API)
         #[arg(long, default_value = "anthropic")]
         provider: String,
@@ -141,6 +144,7 @@ async fn main() -> anyhow::Result<()> {
             specs,
             target,
             env,
+            only,
             provider,
             model,
             base_url,
@@ -201,6 +205,7 @@ async fn main() -> anyhow::Result<()> {
                 spec_root: specs.to_string_lossy().to_string(),
                 target_override: target,
                 env,
+                only,
             };
 
             let report = runner.run(&run_config).await?;

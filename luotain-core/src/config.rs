@@ -70,20 +70,34 @@ pub enum Auth {
     },
 }
 
-/// Load config from a spec tree root.
+/// Load config by searching for `_config.md`.
 ///
-/// Looks for `_config.md` in the root directory.
-/// Returns `Ok(None)` if no config file exists (backward-compatible).
+/// Looks in `spec_root` first, then walks upward through parent directories.
+/// This means `specs/ahti/ingest` finds `specs/ahti/_config.md`.
+/// Returns `Ok(None)` if no config file is found anywhere.
 pub fn load_config(
     spec_root: &Path,
     env: Option<&str>,
 ) -> Result<Option<TargetConfig>, ConfigError> {
-    let config_path = spec_root.join(CONFIG_FILENAME);
-    if !config_path.exists() {
-        return Ok(None);
+    if let Some(config_path) = find_config(spec_root) {
+        let content = std::fs::read_to_string(&config_path)?;
+        return parse_config(&content, env).map(Some);
     }
-    let content = std::fs::read_to_string(&config_path)?;
-    parse_config(&content, env).map(Some)
+    Ok(None)
+}
+
+/// Search for `_config.md` starting at `dir` and walking upward.
+pub fn find_config(dir: &Path) -> Option<std::path::PathBuf> {
+    let mut current = dir.to_path_buf();
+    loop {
+        let candidate = current.join(CONFIG_FILENAME);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
 }
 
 /// Create a TargetConfig from a plain URL (for --target override).

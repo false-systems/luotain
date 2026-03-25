@@ -20,6 +20,8 @@ pub struct RunConfig {
     pub target_override: Option<String>,
     /// Environment name for config overrides (--env staging)
     pub env: Option<String>,
+    /// Filter: only run specs matching this prefix (e.g., "auth/login.md" or "auth/")
+    pub only: Option<String>,
 }
 
 /// Orchestrates a complete test pass over a spec tree.
@@ -47,12 +49,18 @@ impl Runner {
 
         let tree =
             SpecTree::open(&config.spec_root).map_err(|e| RunError::Spec(e.to_string()))?;
-        let spec_paths = tree
+        let mut spec_paths = tree
             .list_specs()
             .map_err(|e| RunError::Spec(e.to_string()))?;
 
+        // Apply --only filter
+        if let Some(filter) = &config.only {
+            let filter = filter.trim_start_matches('/');
+            spec_paths.retain(|p| p.starts_with(filter) || p == filter);
+        }
+
         if spec_paths.is_empty() {
-            tracing::warn!(root = %config.spec_root, "no specs found");
+            tracing::warn!(root = %config.spec_root, only = ?config.only, "no specs matched");
         }
 
         let mut results = Vec::new();
