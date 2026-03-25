@@ -11,11 +11,11 @@
 use crate::prompt;
 use crate::provider::{JudgeError, JudgeProvider};
 use crate::types::{Tool, ToolCall, ToolResult, Turn};
-use luotain_core::http::HttpProbe;
-use luotain_core::probe::{ProbeRequest, ProbeResult};
+use luotain_core::config::TargetConfig;
+use luotain_core::probe::ProbeResult;
+use luotain_core::registry::ProbeRegistry;
 use luotain_core::session::VerdictOutcome;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::time::Instant;
 
 /// Configuration for the agent loop.
@@ -62,38 +62,46 @@ pub struct FailureDetail {
 /// The blackbox testing agent.
 pub struct Agent {
     provider: Box<dyn JudgeProvider>,
-    http_probe: HttpProbe,
+    registry: ProbeRegistry,
     config: AgentConfig,
 }
 
 impl Agent {
-    pub fn new(provider: Box<dyn JudgeProvider>, config: AgentConfig) -> Self {
+    pub fn new(
+        provider: Box<dyn JudgeProvider>,
+        registry: ProbeRegistry,
+        config: AgentConfig,
+    ) -> Self {
         Self {
             provider,
-            http_probe: HttpProbe::new(),
+            registry,
             config,
         }
     }
 
     /// Test a single spec against a live target system.
-    ///
-    /// This drives a complete agent loop:
-    /// 1. Present the spec to the LLM
-    /// 2. LLM calls probe_http to test behaviors
-    /// 3. We execute probes and return observations
-    /// 4. LLM calls record_verdict when satisfied
     pub async fn test_spec(
         &self,
         spec_path: &str,
         spec_content: &str,
-        target: &str,
+        target: &TargetConfig,
     ) -> Result<SpecResult, JudgeError> {
         let start = Instant::now();
-        let system = prompt::system_prompt();
+
+        // Build dynamic system prompt listing available probe tools
+        let probe_names: Vec<&str> = self
+            .registry
+            .tool_definitions()
+            .iter()
+            .map(|d| d.name.as_str())
+            .collect();
+        let system = prompt::system_prompt(&probe_names);
+
+        let target_desc = target_description(target);
 
         let mut turns = vec![Turn::User(format!(
             "## Spec: {}\n\n{}\n\n## Target\n\n{}",
-            spec_path, spec_content, target
+            spec_path, spec_content, target_desc
         ))];
 
         let tools = self.tool_definitions();
@@ -107,7 +115,6 @@ impl Agent {
             let response = self.provider.chat(&system, &turns, &tools).await?;
 
             if !response.has_tool_calls() {
-                // Agent ended without calling record_verdict
                 if verdict.is_none() {
                     verdict = Some(VerdictData {
                         outcome: VerdictOutcome::Inconclusive,
@@ -121,11 +128,9 @@ impl Agent {
                 break;
             }
 
-            // Capture tool calls before moving response into turns
             let tool_calls: Vec<ToolCall> = response.tool_calls.clone();
             turns.push(Turn::Assistant(response));
 
-            // Execute each tool call
             let mut results = Vec::new();
             for tc in &tool_calls {
                 let (content, is_error) = self
@@ -140,12 +145,10 @@ impl Agent {
 
             turns.push(Turn::ToolResults(results));
 
-            // If verdict was recorded, we're done
             if verdict.is_some() {
                 break;
             }
 
-            // Check probe limit
             if probe_count >= self.config.max_probes {
                 tracing::warn!(
                     spec = %spec_path,
@@ -169,7 +172,10 @@ impl Agent {
         let verdict_data = verdict.unwrap_or(VerdictData {
             outcome: VerdictOutcome::Inconclusive,
             evidence: vec![],
-            notes: format!("Max turns reached ({}) without verdict", self.config.max_turns),
+            notes: format!(
+                "Max turns reached ({}) without verdict",
+                self.config.max_turns
+            ),
             failures: vec![],
         });
 
@@ -188,64 +194,29 @@ impl Agent {
     async fn execute_tool(
         &self,
         call: &ToolCall,
-        target: &str,
+        target: &TargetConfig,
         probes: &mut Vec<ProbeResult>,
         verdict: &mut Option<VerdictData>,
         probe_count: &mut usize,
     ) -> (String, bool) {
-        match call.name.as_str() {
-            "probe_http" => {
-                *probe_count += 1;
-                self.execute_probe_http(call, target, probes).await
-            }
-            "record_verdict" => self.execute_record_verdict(call, probes, verdict),
-            other => (format!("Unknown tool: {}", other), true),
+        if call.name == "record_verdict" {
+            return self.execute_record_verdict(call, probes, verdict);
         }
-    }
 
-    async fn execute_probe_http(
-        &self,
-        call: &ToolCall,
-        target: &str,
-        probes: &mut Vec<ProbeResult>,
-    ) -> (String, bool) {
-        let input = &call.input;
-
-        let method = input["method"].as_str().unwrap_or("GET");
-        let path = input["path"].as_str().unwrap_or("/");
-
-        let full_url = format!(
-            "{}/{}",
-            target.trim_end_matches('/'),
-            path.trim_start_matches('/')
-        );
-
-        let mut headers = HashMap::new();
-        if let Some(h) = input["headers"].as_object() {
-            for (k, v) in h {
-                if let Some(vs) = v.as_str() {
-                    headers.insert(k.clone(), vs.to_string());
+        // Dispatch to probe registry
+        if self.registry.has_tool(&call.name) {
+            *probe_count += 1;
+            match self.registry.execute(&call.name, &call.input, target).await {
+                Ok(result) => {
+                    let json = serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_| "failed to serialize".into());
+                    probes.push(result);
+                    (json, false)
                 }
+                Err(e) => (format!("Probe error: {}", e), true),
             }
-        }
-
-        let body = input["body"].as_str().map(String::from);
-
-        let request = ProbeRequest {
-            method: method.to_string(),
-            url: full_url,
-            headers,
-            body,
-        };
-
-        match self.http_probe.probe(&request).await {
-            Ok(result) => {
-                let json = serde_json::to_string_pretty(&result)
-                    .unwrap_or_else(|_| "failed to serialize".into());
-                probes.push(result);
-                (json, false)
-            }
-            Err(e) => (format!("Probe error: {}", e), true),
+        } else {
+            (format!("Unknown tool: {}", call.name), true)
         }
     }
 
@@ -309,78 +280,74 @@ impl Agent {
         )
     }
 
+    /// Build tool definitions from registry + the always-present record_verdict.
     fn tool_definitions(&self) -> Vec<Tool> {
-        vec![
-            Tool {
-                name: "probe_http".into(),
-                description: "Send an HTTP request to the target and observe the response. Returns: status code, headers, body (raw + parsed JSON), content type, body size, timing (ms).".into(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "method": {
-                            "type": "string",
-                            "description": "HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)"
-                        },
-                        "path": {
-                            "type": "string",
-                            "description": "URL path relative to target (e.g., '/api/login', '/health')"
-                        },
-                        "headers": {
+        let mut tools: Vec<Tool> = self
+            .registry
+            .tool_definitions()
+            .iter()
+            .map(|d| Tool {
+                name: d.name.clone(),
+                description: d.description.clone(),
+                parameters: d.parameters.clone(),
+            })
+            .collect();
+
+        tools.push(Tool {
+            name: "record_verdict".into(),
+            description: "Record your final verdict after testing all behaviors in the spec."
+                .into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "outcome": {
+                        "type": "string",
+                        "enum": ["pass", "fail", "skip", "inconclusive"],
+                        "description": "pass=all match, fail=mismatch found, skip=can't test, inconclusive=ambiguous"
+                    },
+                    "evidence": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Probe IDs supporting this verdict"
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "What you tested and found (be specific)"
+                    },
+                    "failures": {
+                        "type": "array",
+                        "description": "Failed behaviors (only when outcome=fail)",
+                        "items": {
                             "type": "object",
-                            "description": "Request headers",
-                            "additionalProperties": { "type": "string" }
-                        },
-                        "body": {
-                            "type": "string",
-                            "description": "Request body (typically JSON string)"
+                            "properties": {
+                                "behavior": { "type": "string" },
+                                "expected": { "type": "string" },
+                                "observed": { "type": "string" },
+                                "probe_id": { "type": "string" }
+                            },
+                            "required": ["behavior", "expected", "observed"]
                         }
-                    },
-                    "required": ["method", "path"]
-                }),
-            },
-            Tool {
-                name: "record_verdict".into(),
-                description: "Record your final verdict after testing all behaviors in the spec.".into(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "outcome": {
-                            "type": "string",
-                            "enum": ["pass", "fail", "skip", "inconclusive"],
-                            "description": "pass=all match, fail=mismatch found, skip=can't test, inconclusive=ambiguous"
-                        },
-                        "evidence": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Probe IDs supporting this verdict"
-                        },
-                        "notes": {
-                            "type": "string",
-                            "description": "What you tested and found (be specific — mention status codes, values)"
-                        },
-                        "failures": {
-                            "type": "array",
-                            "description": "Failed behaviors (only when outcome=fail)",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "behavior": { "type": "string" },
-                                    "expected": { "type": "string" },
-                                    "observed": { "type": "string" },
-                                    "probe_id": { "type": "string" }
-                                },
-                                "required": ["behavior", "expected", "observed"]
-                            }
-                        }
-                    },
-                    "required": ["outcome", "notes"]
-                }),
-            },
-        ]
+                    }
+                },
+                "required": ["outcome", "notes"]
+            }),
+        });
+
+        tools
     }
 }
 
-/// Internal verdict data accumulated during the agent loop.
+/// Human-readable target description for the LLM.
+fn target_description(target: &TargetConfig) -> String {
+    use luotain_core::config::Connection;
+    match &target.connection {
+        Connection::Http { base_url } => base_url.clone(),
+        Connection::Grpc { host, port, .. } => format!("gRPC at {}:{}", host, port),
+        Connection::Tcp { host, port, .. } => format!("TCP at {}:{}", host, port),
+        Connection::Cli { command, .. } => format!("CLI: {}", command),
+    }
+}
+
 struct VerdictData {
     outcome: VerdictOutcome,
     evidence: Vec<String>,

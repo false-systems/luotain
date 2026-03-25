@@ -1,5 +1,10 @@
+pub mod cli_probe;
 pub mod config;
 pub mod http;
 pub mod probe;
+pub mod probe_trait;
+pub mod registry;
 pub mod session;
 pub mod spec;
+pub mod tcp_probe;
+pub mod tool;

@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use luotain_core::http::HttpProbe;
 use luotain_core::probe::ProbeRequest;
+use luotain_core::registry::ProbeRegistry;
 use luotain_core::spec::SpecTree;
 use luotain_judge::agent::{Agent, AgentConfig};
 use luotain_judge::anthropic::AnthropicProvider;
@@ -9,6 +10,7 @@ use luotain_judge::provider::JudgeProvider;
 use luotain_runner::runner::{RunConfig, Runner};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "luotain", version, about = "Blackbox probe toolkit for AI agents")]
@@ -179,8 +181,15 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
+            // Build probe registry — all probe types available
+            let mut registry = ProbeRegistry::new();
+            registry.register(Arc::new(HttpProbe::new()));
+            registry.register(Arc::new(luotain_core::cli_probe::CliProbe));
+            registry.register(Arc::new(luotain_core::tcp_probe::TcpProbe));
+
             let agent = Agent::new(
                 judge_provider,
+                registry,
                 AgentConfig {
                     max_turns,
                     max_probes,

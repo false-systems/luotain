@@ -12,6 +12,7 @@ ulid = "1.1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
+async-trait = "0.1"
 tracing = "0.1"
 toml = "0.8"
 regex = "1"

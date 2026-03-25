@@ -66,7 +66,7 @@ impl Runner {
 
             match self
                 .agent
-                .test_spec(spec_path, &content, &target_url)
+                .test_spec(spec_path, &content, &target_config)
                 .await
             {
                 Ok(result) => {
