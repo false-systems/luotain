@@ -13,9 +13,90 @@ specs/                          luotain run
     checkout.md                 ────────────────────────────────
 ```
 
-## How it works
+## Quick start
 
-1. You write behavior specs as markdown files:
+### 1. Install
+
+```sh
+cargo install --path luotain-cli
+```
+
+### 2. Write a spec
+
+Create `specs/health.md`:
+
+```markdown
+# Health Check
+
+## GET /health
+- Returns 200 OK
+- Response is JSON with `status` field
+```
+
+### 3. Run it
+
+```sh
+# With Claude (default — needs ANTHROPIC_API_KEY)
+luotain run --specs ./specs --target http://localhost:8080
+
+# With a free local model via Ollama
+luotain run --specs ./specs --target http://localhost:8080 \
+  --provider openai --base-url http://localhost:11434/v1 --model llama3
+```
+
+That's it. Luotain reads your spec, probes the system, and tells you if it passes.
+
+## Using with Claude Code (MCP)
+
+No API key needed — Claude Code is the agent.
+
+```sh
+# Build the MCP server
+cargo build --release -p luotain-mcp
+
+# Register with Claude Code
+claude mcp add luotain -- /path/to/luotain-mcp \
+  --spec-root ./specs --target http://localhost:8080
+```
+
+Start a new Claude Code session and say: *"test the specs against localhost"*
+
+Claude reads your specs, probes the system using Luotain's tools, and reports what passes.
+
+## Supported models
+
+Luotain works with any LLM that supports tool use.
+
+**Anthropic (default)**
+```sh
+export ANTHROPIC_API_KEY=sk-ant-...
+luotain run --specs ./specs
+```
+
+**OpenAI**
+```sh
+export OPENAI_API_KEY=sk-...
+luotain run --specs ./specs --provider openai --model gpt-4o
+```
+
+**Ollama (free, local)**
+```sh
+ollama pull llama3
+luotain run --specs ./specs --provider openai \
+  --base-url http://localhost:11434/v1 --model llama3
+```
+
+**Groq (free tier, fast)**
+```sh
+luotain run --specs ./specs --provider openai \
+  --base-url https://api.groq.com/openai/v1 --model mixtral-8x7b
+```
+
+**Any OpenAI-compatible API** — OpenRouter, Together, vLLM, LM Studio — just set `--base-url` and `--model`.
+
+## Writing specs
+
+Specs are plain markdown. No special syntax. The agent reads natural language and figures out what to test.
 
 ```markdown
 # Login API
@@ -27,83 +108,108 @@ specs/                          luotain run
 - Rate limits to 5 attempts per minute
 ```
 
-2. The directory tree mirrors the software you're testing
-3. An AI agent reads each spec, probes the live system, and produces a verdict
-
-No test code. No assertions. No fixtures. Just markdown describing what the software should do.
-
-## Two modes
-
-**Interactive** — Add Luotain as an MCP server to Claude Code. The agent reads specs and probes the system using tools directly.
-
-```sh
-luotain-mcp --spec-root ./specs --target http://localhost:8080
-```
-
-**Automated** — Run from CLI or CI. Luotain drives an LLM agent loop internally.
-
-```sh
-luotain run --specs ./specs --target http://localhost:8080
-```
-
-## Install
-
-```sh
-cargo install --path luotain-cli
-```
-
-## Usage
-
-```sh
-# See what specs exist
-luotain tree ./specs
-
-# Read a spec
-luotain read ./specs auth/login.md
-
-# Probe a system directly
-luotain probe http GET https://httpbin.org/get
-luotain probe http POST https://httpbin.org/post --body '{"key":"value"}'
-
-# Run all specs against a target (needs ANTHROPIC_API_KEY)
-luotain run --specs ./specs --target http://localhost:8080
-
-# JSON output for CI
-luotain run --specs ./specs --target http://localhost:8080 --format json
-
-# Use any OpenAI-compatible model (Ollama, Groq, OpenRouter, etc.)
-luotain run --specs ./specs --target http://localhost:8080 \
-  --provider openai \
-  --base-url http://localhost:11434/v1 \
-  --model llama3
-```
-
-Exit code: `0` if all specs pass, `1` if any fail.
-
-## Spec format
-
-Specs are plain markdown. No frontmatter, no special syntax. The agent reads natural language and figures out what to test.
+Organize specs in a directory tree that mirrors your software:
 
 ```
 specs/
   myapp/
+    _config.md            ← target URL, auth, environment overrides
     auth/
       login.md
       signup.md
-      rate-limiting.md
     payments/
       checkout.md
-      refunds.md
     health/
       readiness.md
 ```
 
-Each `.md` file is one testable unit. The directory structure is the test structure.
+Each `.md` file is one testable unit. Add a file, you added a test.
+
+### Config
+
+Put a `_config.md` at the root of your spec tree to configure the target:
+
+```markdown
+# My API
+
+```toml
+[target]
+type = "http"
+base_url = "https://api.example.com"
+
+[auth]
+type = "bearer"
+token = "${API_TOKEN}"
+
+[env.staging]
+target.base_url = "https://staging.api.example.com"
+```
+```
+
+Secrets use `${VAR}` — resolved from environment variables. Use `--env staging` to switch environments.
+
+### Running specific specs
+
+```sh
+# All specs for a product
+luotain run --specs specs/myapp
+
+# Just the auth specs
+luotain run --specs specs/myapp --only auth/
+
+# Single spec
+luotain run --specs specs/myapp --only auth/login.md
+
+# JSON output for CI
+luotain run --specs specs/myapp --format json
+```
+
+Exit code: `0` if all specs pass, `1` if any fail.
+
+## Probe types
+
+Luotain gives the agent three ways to interact with your system:
+
+| Probe | What it does | Example use |
+|---|---|---|
+| `probe_http` | Send HTTP requests, inspect responses | API testing, health checks |
+| `probe_cli` | Run commands, check exit codes + output | CLI tools, migrations, container exec |
+| `probe_tcp_connect` / `probe_tcp_send` | Test TCP connectivity, send raw bytes | Port checks, Redis PING, protocol probing |
+
+Configure the connection type in `_config.md`:
+
+```toml
+# HTTP (default)
+[target]
+type = "http"
+base_url = "http://localhost:8080"
+
+# CLI
+[target]
+type = "cli"
+command = "docker exec myapp"
+
+# TCP
+[target]
+type = "tcp"
+host = "localhost"
+port = 6379
+```
+
+## CLI reference
+
+```sh
+luotain tree ./specs                    # Show spec tree
+luotain read ./specs auth/login.md      # Read a spec
+luotain probe http GET https://url      # Single HTTP probe
+luotain run --specs ./specs             # Run all specs
+luotain run --specs ./specs --only auth/ --env staging --format json
+```
 
 ## Architecture
 
 ```
-luotain-core     Types, spec tree walker, HTTP probe engine
+luotain-core     Spec tree, config, probe engine (HTTP, CLI, TCP)
 luotain-judge    LLM agent loop, Anthropic + OpenAI-compatible providers
 luotain-runner   Test run orchestration, reporting
 luotain-mcp      MCP server for interactive agent use
@@ -113,20 +219,11 @@ fp               FALSE Protocol integration
 
 ## Part of False Systems
 
-Luotain is part of the [False Systems](https://false.systems) infrastructure toolkit:
+Luotain is part of the [False Systems](https://github.com/false-systems) infrastructure toolkit:
 
 - **SYKLI** — CI/CD engine. Runs Luotain as a pipeline task.
 - **AHTI** — Correlation engine. Correlates probe results with infrastructure events.
 - **FALSE Protocol** — Every probe emits an occurrence (`probe.*` namespace) that AHTI can track.
-
-```rust
-// SYKLI pipeline
-p.task("blackbox-test")
-    .run("luotain run --specs /specs --target $TARGET_URL --format json")
-    .covers(&["specs/**/*.md"])
-    .critical()
-    .on_fail(OnFailAction::Analyze);
-```
 
 ## License
 
