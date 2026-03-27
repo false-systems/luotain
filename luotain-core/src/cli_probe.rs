@@ -84,7 +84,8 @@ impl Probe for CliProbe {
         cmd.arg("-c").arg(&full_command);
 
         // Pipe stdin if provided
-        if input["stdin"].is_string() {
+        let stdin_data = input["stdin"].as_str().map(|s| s.to_string());
+        if stdin_data.is_some() {
             cmd.stdin(std::process::Stdio::piped());
         }
         cmd.stdout(std::process::Stdio::piped());
@@ -92,7 +93,17 @@ impl Probe for CliProbe {
 
         let result = tokio::time::timeout(
             std::time::Duration::from_millis(timeout_ms),
-            cmd.output(),
+            async {
+                let mut child = cmd.spawn()?;
+                if let Some(ref data) = stdin_data {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use tokio::io::AsyncWriteExt;
+                        let _ = stdin.write_all(data.as_bytes()).await;
+                        drop(stdin);
+                    }
+                }
+                child.wait_with_output().await
+            },
         )
         .await;
 

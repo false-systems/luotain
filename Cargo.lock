@@ -824,21 +824,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "luotain-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "luotain-core",
- "luotain-judge",
- "luotain-runner",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "luotain-core"
 version = "0.1.0"
 dependencies = [
@@ -865,24 +850,28 @@ dependencies = [
 name = "luotain-fp"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "luotain-core",
  "serde",
  "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
-name = "luotain-judge"
+name = "luotain-loop"
 version = "0.1.0"
 dependencies = [
- "async-trait",
+ "anyhow",
  "chrono",
+ "clap",
  "luotain-core",
  "reqwest",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -898,20 +887,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "luotain-runner"
-version = "0.1.0"
-dependencies = [
- "luotain-core",
- "luotain-judge",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "ulid",
 ]
 
 [[package]]

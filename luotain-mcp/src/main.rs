@@ -8,13 +8,21 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 #[derive(Parser)]
 #[command(name = "luotain-mcp", about = "Luotain MCP server — blackbox probe toolkit for AI agents")]
 struct Args {
-    /// Path to the spec tree root
+    /// Path to the spec tree root (standalone mode)
     #[arg(long)]
     spec_root: Option<PathBuf>,
+
+    /// Path to a product directory (product mode — has product.md, specs/, results/)
+    #[arg(long)]
+    product: Option<PathBuf>,
 
     /// Target base URL for relative probe URLs
     #[arg(long)]
     target: Option<String>,
+
+    /// Adversarial mode — agent tries to break features instead of confirming them
+    #[arg(long)]
+    adversarial: bool,
 }
 
 #[derive(Deserialize)]
@@ -47,11 +55,15 @@ struct JsonRpcError {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    let target = args.target.unwrap_or_default();
 
-    let state = tools::LuotainState::new(
-        args.spec_root.unwrap_or_else(|| PathBuf::from(".")),
-        args.target.unwrap_or_default(),
-    );
+    let state = if let Some(product_root) = args.product {
+        tools::LuotainState::new_product(product_root, target, args.adversarial)
+            .map_err(|e| anyhow::anyhow!(e))?
+    } else {
+        let spec_root = args.spec_root.unwrap_or_else(|| PathBuf::from("."));
+        tools::LuotainState::new(spec_root, target)
+    };
 
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
