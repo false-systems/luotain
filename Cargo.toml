@@ -2,10 +2,8 @@
 resolver = "2"
 members = [
     "luotain-core",
-    "luotain-judge",
-    "luotain-runner",
     "luotain-mcp",
-    "luotain-cli",
+    "luotain-loop",
     "fp",
 ]
 

@@ -1,22 +1,23 @@
 [package]
-name = "luotain-cli"
+name = "luotain-loop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "luotain"
+name = "luotain-loop"
 path = "src/main.rs"
 
 [dependencies]
-luotain-core = { path = "../luotain-core", features = ["grpc"] }
-luotain-judge = { path = "../luotain-judge" }
-luotain-runner = { path = "../luotain-runner" }
+luotain-core = { path = "../luotain-core" }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
-clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
 anyhow = "1.0"
 
 [lints]
