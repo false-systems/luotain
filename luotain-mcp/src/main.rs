@@ -55,12 +55,15 @@ struct JsonRpcError {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let target = args.target.unwrap_or_default();
 
     let state = if let Some(product_root) = args.product {
+        let target = args.target.ok_or_else(|| {
+            anyhow::anyhow!("--target is required when --product is specified")
+        })?;
         tools::LuotainState::new_product(product_root, target, args.adversarial)
             .map_err(|e| anyhow::anyhow!(e))?
     } else {
+        let target = args.target.unwrap_or_default();
         let spec_root = args.spec_root.unwrap_or_else(|| PathBuf::from("."));
         tools::LuotainState::new(spec_root, target)
     };

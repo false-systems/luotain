@@ -480,6 +480,10 @@ impl LuotainState {
                     .and_then(|d| d.as_str())
                     .unwrap_or(&today);
 
+                if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err() {
+                    return Err("invalid 'date' parameter; expected format YYYY-MM-DD".into());
+                }
+
                 let results = product.read_results(date).map_err(|e| e.to_string())?;
 
                 let passed = results.iter().filter(|r| r.verdict == "pass").count();

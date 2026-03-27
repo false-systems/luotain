@@ -71,7 +71,13 @@ impl Emitter {
         };
 
         let what_failed = result.observation.error.clone();
-        let severity = severity_from_status(result.observation.status);
+        let severity = if result.observation.kind == ProbeKind::Http {
+            severity_from_status(result.observation.status)
+        } else if result.observation.error.is_some() {
+            "error"
+        } else {
+            "info"
+        };
         let outcome = outcome_from_probe(result);
 
         let mut possible_causes = Vec::new();

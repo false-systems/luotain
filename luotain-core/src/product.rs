@@ -15,7 +15,7 @@
 
 use crate::result::SpecResult;
 use crate::spec::{SpecError, SpecTree};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 const PRODUCT_FILENAME: &str = "product.md";
@@ -67,14 +67,46 @@ impl ProductTree {
     }
 
     /// Path to the results directory for a given date (YYYY-MM-DD).
-    fn results_dir(&self, date: &str) -> PathBuf {
-        self.root.join("results").join(date)
+    /// Returns an error if `date` is not strictly YYYY-MM-DD.
+    fn results_dir(&self, date: &str) -> Result<PathBuf, ProductError> {
+        if !Self::is_valid_date(date) {
+            return Err(ProductError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("invalid date format: expected YYYY-MM-DD, got '{}'", date),
+            )));
+        }
+        Ok(self.root.join("results").join(date))
+    }
+
+    fn is_valid_date(date: &str) -> bool {
+        date.len() == 10
+            && date.as_bytes().iter().enumerate().all(|(i, &b)| match i {
+                4 | 7 => b == b'-',
+                _ => b.is_ascii_digit(),
+            })
+    }
+
+    /// Reject spec paths that could escape the results directory.
+    fn sanitize_spec_path(spec: &str) -> Result<&str, ProductError> {
+        let path = Path::new(spec);
+        for component in path.components() {
+            match component {
+                Component::Normal(_) => {}
+                _ => {
+                    return Err(ProductError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("invalid spec path: '{}'", spec),
+                    )));
+                }
+            }
+        }
+        Ok(spec)
     }
 
     /// Write a SpecResult to results/YYYY-MM-DD/<spec_path>.json
     pub fn write_result(&self, date: &str, result: &SpecResult) -> Result<PathBuf, ProductError> {
-        let spec_path = result.spec.trim_end_matches(".md");
-        let result_path = self.results_dir(date).join(format!("{}.json", spec_path));
+        let spec_path = Self::sanitize_spec_path(result.spec.trim_end_matches(".md"))?;
+        let result_path = self.results_dir(date)?.join(format!("{}.json", spec_path));
 
         if let Some(parent) = result_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -85,9 +117,9 @@ impl ProductTree {
         Ok(result_path)
     }
 
-    /// Read all results for a given date. Returns vec of (spec_path, SpecResult).
+    /// Read all results for a given date. Returns a vector of SpecResult.
     pub fn read_results(&self, date: &str) -> Result<Vec<SpecResult>, ProductError> {
-        let dir = self.results_dir(date);
+        let dir = self.results_dir(date)?;
         if !dir.is_dir() {
             return Ok(Vec::new());
         }

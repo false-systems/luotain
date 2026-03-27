@@ -98,7 +98,9 @@ impl Probe for CliProbe {
                 if let Some(ref data) = stdin_data {
                     if let Some(mut stdin) = child.stdin.take() {
                         use tokio::io::AsyncWriteExt;
-                        let _ = stdin.write_all(data.as_bytes()).await;
+                        if let Err(e) = stdin.write_all(data.as_bytes()).await {
+                            return Err(e);
+                        }
                         drop(stdin);
                     }
                 }

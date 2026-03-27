@@ -141,21 +141,20 @@ fn resolve_target(args: &Args, product: &ProductTree) -> anyhow::Result<String> 
     if let Some(ref t) = args.target {
         return Ok(t.clone());
     }
-    // Try _config.md
-    let config_path = product.root().join("_config.md");
-    if config_path.is_file() {
-        let content = std::fs::read_to_string(&config_path)?;
-        // Simple extraction: find base_url in TOML
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("base_url") {
-                if let Some(url) = trimmed.split('=').nth(1) {
-                    let url = url.trim().trim_matches('"');
-                    if !url.starts_with("${") {
-                        return Ok(url.to_string());
-                    }
-                }
+    // Try _config.md via luotain-core's config system
+    let specs_dir = product.root().join("specs");
+    if specs_dir.is_dir() {
+        if let Ok(Some(config)) = luotain_core::config::load_config(&specs_dir, None) {
+            if let luotain_core::config::Connection::Http { base_url } = config.connection {
+                return Ok(base_url);
             }
+        }
+    }
+    // Also try _config.md at product root
+    let product_root = product.root();
+    if let Ok(Some(config)) = luotain_core::config::load_config(product_root, None) {
+        if let luotain_core::config::Connection::Http { base_url } = config.connection {
+            return Ok(base_url);
         }
     }
     anyhow::bail!("No target URL. Use --target or set base_url in _config.md")
@@ -271,7 +270,13 @@ async fn evaluate_spec(
             req = req.bearer_auth(key);
         }
 
-        let resp: ChatResponse = req.send().await?.json().await?;
+        let resp_raw = req.send().await?;
+        let status = resp_raw.status();
+        if !status.is_success() {
+            let body = resp_raw.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("agent API error: HTTP {} - {}", status, body));
+        }
+        let resp: ChatResponse = resp_raw.json().await?;
         let choice = resp.choices.into_iter().next()
             .ok_or_else(|| anyhow::anyhow!("no choices in response"))?;
 
@@ -286,8 +291,21 @@ async fn evaluate_spec(
             });
 
             for tc in tool_calls {
-                let args_json: serde_json::Value =
-                    serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+                let args_json: serde_json::Value = match serde_json::from_str(&tc.function.arguments) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let tool_result = serde_json::json!({
+                            "error": format!("invalid JSON arguments for tool '{}': {}", tc.function.name, e)
+                        }).to_string();
+                        messages.push(ChatMessage {
+                            role: "tool".into(),
+                            content: Some(tool_result),
+                            tool_calls: None,
+                            tool_call_id: Some(tc.id.clone()),
+                        });
+                        continue;
+                    }
+                };
 
                 let tool_result = match tc.function.name.as_str() {
                     "probe_http" => {
@@ -313,10 +331,15 @@ async fn evaluate_spec(
         } else {
             // No tool calls — model finished with text. Try to extract verdict.
             let text = choice.message.content.unwrap_or_default();
-            let verdict = if text.to_lowercase().contains("pass") {
-                "pass"
-            } else if text.to_lowercase().contains("fail") {
+            let lowercase = text.to_lowercase();
+            let has_fail = lowercase.split_whitespace()
+                .any(|w| w.trim_matches(|c: char| !c.is_ascii_alphabetic()) == "fail");
+            let has_pass = lowercase.split_whitespace()
+                .any(|w| w.trim_matches(|c: char| !c.is_ascii_alphabetic()) == "pass");
+            let verdict = if has_fail {
                 "fail"
+            } else if has_pass {
+                "pass"
             } else {
                 "inconclusive"
             };
