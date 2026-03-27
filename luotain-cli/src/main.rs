@@ -190,6 +190,7 @@ async fn main() -> anyhow::Result<()> {
             registry.register(Arc::new(HttpProbe::new()));
             registry.register(Arc::new(luotain_core::cli_probe::CliProbe));
             registry.register(Arc::new(luotain_core::tcp_probe::TcpProbe));
+            registry.register(Arc::new(luotain_core::grpc_probe::GrpcProbe::new()));
 
             let agent = Agent::new(
                 judge_provider,

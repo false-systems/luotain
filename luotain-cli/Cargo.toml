@@ -9,7 +9,7 @@ name = "luotain"
 path = "src/main.rs"
 
 [dependencies]
-luotain-core = { path = "../luotain-core" }
+luotain-core = { path = "../luotain-core", features = ["grpc"] }
 luotain-judge = { path = "../luotain-judge" }
 luotain-runner = { path = "../luotain-runner" }
 serde_json = "1.0"

@@ -1,5 +1,6 @@
 pub mod cli_probe;
 pub mod config;
+pub mod grpc_probe;
 pub mod http;
 pub mod probe;
 pub mod probe_trait;
